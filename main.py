@@ -1,34 +1,48 @@
-import re
-import requests as r
+from argparse import ArgumentParser
+from operator import itemgetter
+import requests as req
 import os
 
-pattern = r'^[a-z]{2}(-[a-z]{2})?\.[a-z]+$'
+parser = ArgumentParser(description='Downloads all files from a specified wiki page.')
+parser.add_argument('wiki', help='enter the wiki subdomain', type=str)
+parser.add_argument('page', help='enter the wiki page to get the files', type=str)
+parser.add_argument('-l', '--lang', help='enter the wiki language path', type=str, default='')
+parser.add_argument('-r', '--replace', help='replace existing files if specified', action='store_true')
+args = parser.parse_args()
+wiki, page, lang, replace = itemgetter('wiki', 'page', 'lang', 'replace')(vars(args))
 
-lang = '/'
-wiki = input('wiki: ')
-page = input('page: ')
+def get_json():
+    url = f'https://{wiki}.fandom.com/{lang}/rest.php/v1/page/{page}/links/media'
+    res = req.get(url)
+    return res.json()
 
-if re.match(pattern, wiki):
-    wiki = wiki.split('.')
-    lang += wiki[0]
-    wiki = wiki[1]
+def get_files():
+    files = get_json()['files']
+    filtered_list = []
+    for file in files:
+        filtered_list.append({
+            'name': file['title'],
+            'url': file['original']['url']
+        })
+    return filtered_list
 
-url = f'https://{wiki}.fandom.com{lang}/rest.php/v1/page/{page}/links/media'
+def download_files():
+    wiki_dir = '.'.join([lang, wiki]) if lang else wiki
+    file_dir = os.path.join('files', wiki_dir, page)
+    if not os.path.exists(file_dir):
+        os.makedirs(file_dir)
+    for i in get_files():
+        name, url = itemgetter('name', 'url')(i)
+        res = req.get(url)
+        file_path = os.path.join(file_dir, name)
+        if os.path.exists(file_path) and not replace:
+            print(f'{name} ⏭️')
+            continue
+        if res.status_code == 200:
+            with open(file_path, 'wb') as file:
+                file.write(res.content)
+            print(f'{name} ✅')
+        else:
+            print(f'{name} ❌')
 
-response = r.get(url)
-json = response.json()
-files = [{'title': file['title'], 'url': file['original']['url']} for file in json['files']]
-
-file_dir = os.path.join('files', '.'.join([lang[1:], wiki]), page)
-if not os.path.exists(file_dir):
-    os.makedirs(file_dir)
-
-for file in files:
-    response = r.get(file['url'])
-    file_name = os.path.join(file_dir, file['title'])
-    if response.status_code == 200:
-        with open(file_name, 'wb') as file_:
-            file_.write(response.content)
-        print(f'{file["title"]} ✅')
-    else:
-        print(f'{file["title"]} ❌')
+download_files()
